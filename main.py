@@ -346,7 +346,7 @@ def parse_cfdi_xml(xml_path: Path) -> Optional[CFDIRecord]:
 # Excel
 # =========================
 
-def build_workbook(records: List[CFDIRecord], template_path: Optional[Path] = None) -> Workbook:
+def build_workbook(records: List[CFDIRecord], ref_ciente: str,template_path: Optional[Path] = None,) -> Workbook:
     if template_path and template_path.exists():
         wb = load_workbook(template_path)
     else:
@@ -360,16 +360,20 @@ def build_workbook(records: List[CFDIRecord], template_path: Optional[Path] = No
         if sheet_name not in wb.sheetnames:
             wb.create_sheet(sheet_name)
 
-    ingresos = [r for r in records if r.tipo_comprobante.startswith("I-")]
-    egresos = [r for r in records if r.tipo_comprobante.startswith("E-")]
+    emitidos = [r for r in records if r.rfc_emisor == ref_ciente]
+    recibidos = [r for r in records if r.rfc_receptor == ref_ciente]
 
-    write_sheet(wb["INGRESOS"], ingresos)
-    write_sheet(wb["EGRESOS"], egresos)
+    write_sheet(wb["INGRESOS"], emitidos)
+    write_sheet(wb["EGRESOS"], recibidos)
 
     return wb
 
-
-def write_sheet(ws, records: List[CFDIRecord]) -> None:
+def write_sheet(ws: Workbook, records: List[CFDIRecord]) -> None:
+    cancelados = [r for r in records if r.estatus_cancelacion == "Cancelado"]
+    vigentes = [r for r in records if r.estatus_cancelacion != "Cancelado"]
+    pagos = [r for r in vigentes if r.tipo_comprobante.startswith("P-")]
+    nominas = [r for r in vigentes if r.tipo_comprobante.startswith("N-")]
+    standars = [r for r in vigentes if not r.tipo_comprobante.startswith("N-") and not r.tipo_comprobante.startswith("P-")]
     # encabezados
     for col_idx, header in enumerate(OUTPUT_HEADERS, start=1):
         cell = ws.cell(row=1, column=col_idx, value=header)
@@ -378,14 +382,13 @@ def write_sheet(ws, records: List[CFDIRecord]) -> None:
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     # datos
-    for row_idx, record in enumerate(records, start=2):
+    for row_idx, record in enumerate(standars, start=2):
         row = record.to_row()
         for col_idx, value in enumerate(row, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)
 
-    # formato básico
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(OUTPUT_HEADERS))}{max(1, len(records) + 1)}"
+
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(OUTPUT_HEADERS))}{max(1, len(vigentes) + 1)}"
 
     widths = {
         1: 14, 2: 8, 3: 22, 4: 16, 5: 18, 6: 28, 7: 18, 8: 28,
@@ -406,6 +409,22 @@ def write_sheet(ws, records: List[CFDIRecord]) -> None:
                 cell.alignment = Alignment(horizontal="center")
             else:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    for row_idx, record in enumerate(pagos, start=2):
+        row = record.to_row()
+        for col_idx, value in enumerate(row, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+    
+
+    for row_idx, record in enumerate(nominas, start=2):
+        row = record.to_row()
+        for col_idx, value in enumerate(row, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+    
+    for row_idx, record in enumerate(cancelados, start=2):
+        row = record.to_row()
+        for col_idx, value in enumerate(row, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
 
 
 # =========================
@@ -443,12 +462,8 @@ def main():
         if record is not None:
             records.append(record)
 
-    print(records[0])
 
-    emitidos = [r for r in records if r.rfc_emisor == args.rfc]
-    recibidos = [r for r in records if r.rfc_receptor == args.rfc]
-
-    wb = build_workbook(records, template_path=template_path)
+    wb = build_workbook(records, ref_ciente=args.rfc, template_path=template_path)
     wb.save(output_path)
 
     print(f"[OK] XML procesados: {len(xml_files)}")
